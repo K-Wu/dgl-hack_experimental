@@ -34,11 +34,11 @@ cusparseStatus_t Xcsrmm2<float>(cusparseHandle_t handle, cusparseOperation_t tra
     const float* alpha, const cusparseMatDescr_t descrA,
     const float* csrValA, const int* csrRowPtrA, const int* csrColIndA,
     const float* B, int ldb, const float* beta, float* C, int ldc) {
-  return cusparseScsrmm2(handle, transA, transB, m, n, k, nnz,
-      alpha, descrA, csrValA, csrRowPtrA, csrColIndA,
-      B, ldb, beta, C, ldc);
-  //assert(0);
-  //return (cuparseStatus_t) -1;
+  // return cusparseScsrmm2(handle, transA, transB, m, n, k, nnz,
+  //     alpha, descrA, csrValA, csrRowPtrA, csrColIndA,
+  //     B, ldb, beta, C, ldc);
+  assert(0);
+  return (cusparseStatus_t) -1;
   //return cusparseSpMM(handle, transA, transB, alpha, descrA, B, beta, C, CUSPARSE_MM_ALG_DEFAULT, nullptr);
 }
 
@@ -48,11 +48,11 @@ cusparseStatus_t Xcsrmm2<double>(cusparseHandle_t handle, cusparseOperation_t tr
     const double* alpha, const cusparseMatDescr_t descrA,
     const double* csrValA, const int* csrRowPtrA, const int* csrColIndA,
     const double* B, int ldb, const double* beta, double* C, int ldc) {
-  //assert(0);
-  //return (cuparseStatus_t) -1;
-  return cusparseDcsrmm2(handle, transA, transB, m, n, k, nnz,
-      alpha, descrA, csrValA, csrRowPtrA, csrColIndA,
-      B, ldb, beta, C, ldc);
+  assert(0);
+  return (cusparseStatus_t) -1;
+  // return cusparseDcsrmm2(handle, transA, transB, m, n, k, nnz,
+  //     alpha, descrA, csrValA, csrRowPtrA, csrColIndA,
+  //     B, ldb, beta, C, ldc);
 }
 
 template <typename DType>
@@ -117,19 +117,38 @@ void CusparseCsrmm2(
   // all one data array
   DType* valptr = static_cast<DType*>(device->AllocWorkspace(rtcfg.ctx, nnz * sizeof(DType)));
   utils::Fill<kDLGPU>(rtcfg.ctx, valptr, nnz, static_cast<DType>(1.));
-  cusparseMatDescr_t descr;
-  CUSPARSE_CALL(cusparseCreateMatDescr(&descr));
-  CUSPARSE_CALL(cusparseSetMatType(descr, CUSPARSE_MATRIX_TYPE_GENERAL));
-  CUSPARSE_CALL(cusparseSetMatIndexBase(descr, CUSPARSE_INDEX_BASE_ZERO));
-  CUSPARSE_CALL(Xcsrmm2<DType>(
-      thr_entry->cusparse_handle,
-      CUSPARSE_OPERATION_NON_TRANSPOSE,
-      CUSPARSE_OPERATION_TRANSPOSE,
-      m, n, k, nnz, &alpha,
-      descr, valptr,
-      static_cast<int32_t*>(csr.indptr->data),
-      static_cast<int32_t*>(csr.indices->data),
-      B_data, n, &beta, trans_out, m));
+  // the following is using deprecated cusparse call
+  // cusparseMatDescr_t descr;
+  // CUSPARSE_CALL(cusparseCreateMatDescr(&descr));
+  // CUSPARSE_CALL(cusparseSetMatType(descr, CUSPARSE_MATRIX_TYPE_GENERAL));
+  // CUSPARSE_CALL(cusparseSetMatIndexBase(descr, CUSPARSE_INDEX_BASE_ZERO));
+  // CUSPARSE_CALL(Xcsrmm2<DType>(
+  //     thr_entry->cusparse_handle,
+  //     CUSPARSE_OPERATION_NON_TRANSPOSE,
+  //     CUSPARSE_OPERATION_TRANSPOSE,
+  //     m, n, k, nnz, &alpha,
+  //     descr, valptr,
+  //     static_cast<int32_t*>(csr.indptr->data),
+  //     static_cast<int32_t*>(csr.indices->data),
+  //     B_data, n, &beta, trans_out, m));
+  cusparseDnMatDescr_t bMatDescr;
+  CUSPARSE_CALL(cusparseCreateDnMat(&bMatDescr, k, n, n, (void*) B_data, CUDA_R_32F, CUSPARSE_ORDER_COL));
+  cusparseSpMatDescr_t  aDescr;
+  CUSPARSE_CALL(cusparseCreateCsr(&aDescr, m, k, nnz, static_cast<int32_t*>(csr.indptr->data),
+      static_cast<int32_t*>(csr.indices->data), valptr, CUSPARSE_INDEX_32I, CUSPARSE_INDEX_32I,
+      CUSPARSE_INDEX_BASE_ZERO, CUDA_R_32F));
+  cusparseSpMMAlg_t algo = CUSPARSE_SPMM_ALG_DEFAULT;
+  size_t bufferSize = 0;
+  
+  CUSPARSE_CALL(cusparseSpMM_bufferSize(thr_entry->cusparse_handle, CUSPARSE_OPERATION_NON_TRANSPOSE, CUSPARSE_OPERATION_TRANSPOSE, &alpha,
+      aDescr, bMatDescr, &beta, bMatDescr, CUDA_R_32F, algo, &bufferSize));
+  void* dBuffer = device->AllocWorkspace(rtcfg.ctx, bufferSize);
+  CUDA_CALL(cudaMalloc(&dBuffer, bufferSize));
+  CUSPARSE_CALL(cusparseSpMM(thr_entry->cusparse_handle, CUSPARSE_OPERATION_NON_TRANSPOSE, CUSPARSE_OPERATION_TRANSPOSE, &alpha,
+      aDescr, bMatDescr, &beta, bMatDescr, CUDA_R_32F, algo, dBuffer));
+  device->FreeWorkspace(rtcfg.ctx, dBuffer);
+
+
   device->FreeWorkspace(rtcfg.ctx, valptr);
   // transpose the output matrix
   if (!thr_entry->cublas_handle) {
