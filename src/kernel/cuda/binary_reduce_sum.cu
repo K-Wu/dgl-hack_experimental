@@ -10,7 +10,7 @@
 #include "./backward_binary_reduce_impl.cuh"
 #include "../utils.h"
 #include "../csr_interface.h"
-
+//#include <cusparse.h>
 using minigun::advance::RuntimeConfig;
 
 namespace dgl {
@@ -37,6 +37,9 @@ cusparseStatus_t Xcsrmm2<float>(cusparseHandle_t handle, cusparseOperation_t tra
   return cusparseScsrmm2(handle, transA, transB, m, n, k, nnz,
       alpha, descrA, csrValA, csrRowPtrA, csrColIndA,
       B, ldb, beta, C, ldc);
+  //assert(0);
+  //return (cuparseStatus_t) -1;
+  //return cusparseSpMM(handle, transA, transB, alpha, descrA, B, beta, C, CUSPARSE_MM_ALG_DEFAULT, nullptr);
 }
 
 template <>
@@ -45,6 +48,8 @@ cusparseStatus_t Xcsrmm2<double>(cusparseHandle_t handle, cusparseOperation_t tr
     const double* alpha, const cusparseMatDescr_t descrA,
     const double* csrValA, const int* csrRowPtrA, const int* csrColIndA,
     const double* B, int ldb, const double* beta, double* C, int ldc) {
+  //assert(0);
+  //return (cuparseStatus_t) -1;
   return cusparseDcsrmm2(handle, transA, transB, m, n, k, nnz,
       alpha, descrA, csrValA, csrRowPtrA, csrColIndA,
       B, ldb, beta, C, ldc);

@@ -41,7 +41,8 @@ void print_gdata(runtime::NDArray feat_src,
     runtime::NDArray ret,
     const minigun::Csr<Idx> &csr,
     Idx el_xlen,
-    Idx feat_src_xlen);
+    Idx feat_src_xlen,
+    runtime::NDArray  eid);
 
 template <typename DType>
 __device__ DType gatLeakyReluExp(DType val, DType slope) {
@@ -240,9 +241,9 @@ __global__ void fusedGatBackwardGradElEr3(BackwardGatFusedData<Idx, DType> gdata
                     DType b = gdata.grad_out[dst_out_offset] * gdata.ret[dst_out_offset];
                     DType b1 = b/gdata.sum[dst_node_feat_offset];
                     DType c = -1 * b1;
-                    DType e = a1 + c;
+                    DType ee = a1 + c;
                     DType tmp_sum = gdata.el[src_node_feat_offset] + gdata.er[dst_node_feat_offset];
-                    DType g = e * gdata.exp[edge_offset];
+                    DType g = ee * gdata.exp[edge_offset];
                     DType h = tmp_sum > 0? 1 : gdata.leaky_relu_slope;
                     DType k = g * h;
                     s += k;
@@ -287,9 +288,9 @@ __global__ void fusedGatBackwardGradElEr4(BackwardGatFusedData<Idx, DType> gdata
                     DType b = gdata.grad_out[dst_out_offset] * gdata.ret[dst_out_offset];
                     DType b1 = b/gdata.sum[dst_node_feat_offset];
                     DType c = -1 * b1;
-                    DType e = a1 + c;
+                    DType ee = a1 + c;
                     DType tmp_sum = gdata.el[src_node_feat_offset] + gdata.er[dst_node_feat_offset];
-                    DType g = e * gdata.exp[edge_offset];
+                    DType g = ee * gdata.exp[edge_offset];
                     DType h = tmp_sum > 0? 1 : gdata.leaky_relu_slope;
                     DType k = g * h;
                     s += k;
@@ -339,9 +340,9 @@ __global__ void fusedGatBackwardGradElEr5(BackwardGatFusedData<Idx, DType> gdata
                     DType b = gdata.grad_out[dst_out_offset] * gdata.ret[dst_out_offset];
                     DType b1 = b/gdata.sum[dst_node_feat_offset];
                     DType c = -1 * b1;
-                    DType e = a1 + c;
+                    DType ee = a1 + c;
                     DType tmp_sum = gdata.el[src_node_feat_offset] + gdata.er[dst_node_feat_offset];
-                    DType g = e * gdata.exp[edge_offset];
+                    DType g = ee * gdata.exp[edge_offset];
                     DType h = tmp_sum > 0? 1 : gdata.leaky_relu_slope;
                     DType k = g * h;
                     s += k;
@@ -390,6 +391,14 @@ void FusedGatKernelImpl(
         auto incsr = graph.GetInCSRMatrix();
         minigun::Csr<Idx> csr = utils::CreateCsr<Idx>(incsr.indptr, incsr.indices);
         gdata.eids = static_cast<Idx*>(incsr.data->data);
+        // print eids
+        // printf("eids: ");
+        // for (Idx i=0; i<gdata.n; ++i) {
+        //     for (Idx j=0; j<el_xlen; ++j) {
+        //         printf("%d ", gdata.eids[i*el_xlen + j]);
+        //     }
+        //     printf("\n");
+        // }
         // write a device function and call it from here
         //LOG(INFO) << "Within Fused Gat Kernel Impl." << "feat_src_dim:" << feat_src.GetSize()/sizeof(DType)/feat_src_xlen << "*" << feat_src_xlen 
         //    <<" el_dim:" << el.GetSize()/sizeof(DType)/el_xlen << "*" << el_xlen  << " ret_dim:" << ret.GetSize()/sizeof(DType)/ret_len <<"*" << ret_len
@@ -407,7 +416,7 @@ void FusedGatKernelImpl(
         const dim3 nthrs(nthrs_x, nthrs_y);
         //LOG(INFO) << "kernel1 blk dim:" << nblks_x << "*" <<nblks_y << " thr dim:" <<nthrs_x << "*" << nthrs_y;
 
-        //print_gdata<Idx, DType>(feat_src,el,er,sum,exp,ret,csr,el_xlen, feat_src_xlen);
+        //print_gdata<Idx, DType>(feat_src,el,er,sum,exp,ret,csr,el_xlen, feat_src_xlen, incsr.data);
         //gatExpLeakyReluSumKernel<<<nblks, nthrs, el_xlen*sizeof(DType), thr_entry->stream>>>(gdata, csr);
         gatExpLeakyReluSumKernel<<<nblks, nthrs, 0, thr_entry->stream>>>(gdata, csr);
         //print_gdata<Idx, DType>(feat_src,el,er,sum,exp,ret,csr,el_xlen, feat_src_xlen);
@@ -418,6 +427,12 @@ void FusedGatKernelImpl(
         const dim3 nthrs2(nthrs_x, nthrs_y);
         const dim3 nblks2(nblks_x, nblks_y);
         //LOG(INFO) << "kernel2 blk dim:" << nblks_x << "*" <<nblks_y << " thr dim:" <<nthrs_x << "*" << nthrs_y;
+        //    printf("n_rows: %d\n", csr.row_offsets.length-1);
+        //    printf("e_xlen: %d\n", gdata.e_xlen);
+        //    printf("hidden_xlen: %d\n", gdata.feat_src_xlen/gdata.e_xlen);
+        //    printf("stride_head: %d\n", nblks_x * nthrs_x);
+        //    printf("stride_vid: %d\n", nblks_y);
+        //    printf("dst_vid: %d\n", nthrs_y);
         gatSumProdZipDivKernel<<<nblks2, nthrs2, 0, thr_entry->stream>>>(gdata, csr);
 }
 
@@ -1291,7 +1306,7 @@ void BackwardFusedGatKernelImpl(
         //    <<" sum_dim:" << sum.GetSize()/sizeof(DType)/el_xlen << "*" << el_xlen
         //    <<" exp_dim:" << exp.GetSize()/sizeof(DType)/el_xlen << "*" << el_xlen
         //    << " graph csr row_offset length:" <<csr.row_offsets.length << " graph csr column indices length:" << csr.column_indices.length;
-        //print_gdata<Idx, DType>(feat_src,el,er,sum,exp,grad_out,ocsr,el_xlen, feat_src_xlen);
+        //print_gdata<Idx, DType>(feat_src,el,er,sum,exp,grad_out,ocsr,el_xlen, feat_src_xlen, gdata.eids);
         // Configure kernel launch parameters.
         auto* thr_entry = runtime::CUDAThreadEntry::ThreadLocal();
         int nthrs_x = utils::FindNumThreads(el_xlen, 64);
@@ -1410,7 +1425,8 @@ void print_gdata(runtime::NDArray feat_src,
     runtime::NDArray ret,
     const minigun::Csr<Idx> &csr,
     Idx el_xlen,
-    Idx feat_src_xlen) {
+    Idx feat_src_xlen,
+    runtime::NDArray  eid) {
         std::string str_csr = print_csr<Idx>(csr);
         std::string str_el = print_gdata2d<Idx, DType>(el, csr.row_offsets.length-1, el_xlen);
         std::string str_er = print_gdata2d<Idx, DType>(er, csr.row_offsets.length-1, el_xlen);
@@ -1418,7 +1434,8 @@ void print_gdata(runtime::NDArray feat_src,
         std::string str_exp = print_gdata2d<Idx, DType>(exp, csr.column_indices.length, el_xlen);
         std::string str_sum = print_gdata2d<Idx, DType>(sum, csr.row_offsets.length-1, el_xlen);
         std::string str_ret = print_gdata2d<Idx, DType>(ret, csr.row_offsets.length-1, feat_src_xlen);
-        LOG(INFO) << "csr " << str_csr << " feat_src "<< str_feat_src << " el "<< str_el << " er " << str_er << "exp " << str_exp << "sum " <<str_sum << " ret" << str_ret;
+        std::string str_eid = print_gdata2d<Idx, Idx>(eid, csr.column_indices.length, 1);
+        LOG(INFO) << "csr " << str_csr << " feat_src "<< str_feat_src << " el "<< str_el << " er " << str_er << "exp " << str_exp << "sum " <<str_sum << " ret" << str_ret << " eid"<<str_eid;
 }
 
 }  // namespace kernel
